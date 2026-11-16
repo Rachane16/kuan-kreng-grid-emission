@@ -22,7 +22,8 @@ class HistoricalTests(unittest.TestCase):
         self.av={s:{"min_date":"2026-08-01","max_date":"2026-11-13"} for s in m.SOURCES}
         self.av["MODIS_NRT"]["min_date"]="2026-09-01"
         self.av["MODIS_SP"]={"min_date":"2000-11-01","max_date":"2026-08-31"}
-        pixel=m.footprint(observation("2026-08-15","600"))
+        x,y=m.TO_METRIC.transform(100,8)
+        pixel=box(x-50,y-50,x+50,y+50)
         self.spatial=(pixel.buffer(100),{k:pixel for k in ("GRASS","LEPIRONIA","M_CAJU","PADDY","PEAT")},{})
     def test_product_by_date_and_sp_normalization(self):
         self.assertEqual(b.product_for("MODIS_NRT","2026-08-15",self.av),"MODIS_SP")

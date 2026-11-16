@@ -1,4 +1,4 @@
-name: Collect FIRMS and deploy dashboard
+name: Collect FIRMS and deploy grid dashboard
 on:
   workflow_dispatch:
     inputs:
@@ -16,7 +16,7 @@ on:
     branches: [main]
     paths: ['web/**', 'scripts/**', 'config/**', 'requirements.txt', 'tests/**', '.github/workflows/dashboard.yml']
 concurrency:
-  group: firms-dashboard
+  group: grid-dashboard
   cancel-in-progress: false
 permissions:
   contents: write

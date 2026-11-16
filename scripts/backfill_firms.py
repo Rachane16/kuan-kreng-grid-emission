@@ -69,7 +69,7 @@ def backfill(first,last,root=m.ROOT,key=None,now=None):
         raise RuntimeError("Historical import failed for all sources; saved data retained")
     boundary,layers,indices=m.spatial_inputs(root)
     inside=prep(boundary)
-    def in_aoi(o): return inside.intersects(m.footprint(o)) and m.footprint(o).intersection(boundary).area>0
+    def in_aoi(o): return m.in_boundary(o,boundary)
     observations=[o for o in existing.values() if in_aoi(o)]
     parameters=m.load_json(root/"config"/"emission_parameters.json")
     parameter_hash=hashlib.sha256(json.dumps(parameters,sort_keys=True).encode()).hexdigest()
@@ -98,7 +98,7 @@ def backfill(first,last,root=m.ROOT,key=None,now=None):
             "daily_policy":"independent_daily_fuel_scenario","window_start_utc":lo.isoformat(),
             "window_end_utc":hi.isoformat(),"calendar_day_fully_queried":complete,
             "source_status":statuses,"data_state":"ok" if complete else "partial",
-            "by_source":selections,"footprints":m.point_features(records,boundary,layers,parameters,indices)}
+            "model_id":m.MODEL_ID,"full_grid_scenario":True,"by_source":selections,"hotspots":m.point_features(records,boundary,layers,parameters,indices)}
         m.write_json(target/"daily"/(day+".json"),payload)
         m.write_json(target/"history"/(day+".json"),{"date":day,"observations":records})
         total=selections["ALL"]
@@ -117,7 +117,7 @@ def backfill(first,last,root=m.ROOT,key=None,now=None):
                 "thai_dates":sorted({o["local_date"] for o in aoi})})
     m.write_json(target/"backfill_status.json",{"state":"ok" if all(c["state"]=="ok" for c in coverage.values()) else "partial",
         "generated_utc":now.isoformat(),"requested_thai_dates":requested,"written_dates":written,
-        "comparison_utc":comparison,"note":"FIRMS dates are UTC; dashboard dates are Asia/Bangkok. AOI clips approximate footprints."})
+        "comparison_utc":comparison,"note":"FIRMS dates are UTC; dashboard dates are Asia/Bangkok. Only point centers inside the AOI activate full 1 km cells."})
     return 0 if written else 2
 
 def main():

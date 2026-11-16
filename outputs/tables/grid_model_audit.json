@@ -1,0 +1,1 @@
+{"model_id":"full_grid_1km_v1","grid_size_m":1000,"metric_crs":"EPSG:32647","origin":[0,0],"connectivity":4,"total_cells":1052,"study_area_ha":93105.27290583253,"grid_area_ha":93105.27290583277,"symmetric_difference_m2":0.0,"cell_area_sum_minus_union_m2":1.7881393432617188e-06,"calendar_days":96,"observations_in_AOI":115,"first_day":"2026-08-13","last_day":"2026-11-16"}

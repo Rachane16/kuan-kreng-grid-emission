@@ -39,3 +39,14 @@
 .card-heading{flex-wrap:wrap}.card-heading h3{font-size:16px}.card-heading p{font-size:12px}.map-actions{width:100%;justify-content:space-between}.map-actions select{width:180px}.map-container{height:440px}
 .table-note{font-size:12px}.main-footer{font-size:12px}.trend-custom input{max-width:145px}.trend-summary{font-size:13px}.leaflet-popup-content{margin:12px}
 }
+
+/* Full-grid daily scenario. */
+.scenario-banner{padding:14px 18px;border:1px solid #d8be83;border-radius:7px;background:#fff7e5;color:#705724;margin:0 0 18px;display:flex;flex-direction:column;gap:3px}
+.scenario-banner strong{font-size:17px}.scenario-banner span{font-size:13px}
+.metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.grid-map-controls{display:flex;gap:20px;align-items:center;padding:10px 18px;border-top:1px solid #e5ece3;background:#f8faf7;flex-wrap:wrap;font-size:14px}
+.grid-map-controls label{display:flex;gap:8px;align-items:center}.grid-map-controls select{width:190px;color:#335d4b;background:white;border-color:#cad8c9;padding:7px 9px;font-size:14px}
+.grid-map-controls input{accent-color:#237760;width:16px;height:16px}
+.cluster-card{margin-top:18px;background:white;border:1px solid var(--line);border-radius:7px;overflow:hidden}.export-actions{display:flex;gap:16px;flex-wrap:wrap;font-size:13px}
+.cluster-zoom{border:0;background:#e9f2e5;border-radius:4px;color:#326e4f;padding:6px 10px;font-size:14px}.cluster-id{display:block;color:#8a9b90;font:11px system-ui;margin-top:3px}
+.grid-popup>strong{display:block;word-break:break-word}.grid-popup .pixel-note{line-height:1.6}
+@media(max-width:720px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.scenario-banner{padding:12px}.scenario-banner strong{font-size:15px}.scenario-banner span{font-size:12px}.grid-map-controls{gap:12px;padding:10px 12px;font-size:13px}.grid-map-controls label:first-child{width:100%}.grid-map-controls select{width:190px}.export-actions{font-size:12px}.cluster-card .card-heading{align-items:start}.cluster-id{max-width:160px;word-break:break-all}}

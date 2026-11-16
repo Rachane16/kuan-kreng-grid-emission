@@ -1,6 +1,4 @@
-"""FIRMS daily collector and area-based PM2.5 model.
-Source data are preserved; sensor pixel geometry is an explicit project approximation.
-"""
+"""FIRMS point collector and independent daily full-grid PM2.5 scenarios."""
 from __future__ import annotations
 import argparse
 import csv
@@ -22,6 +20,7 @@ from shapely.geometry import shape, mapping, box, GeometryCollection
 from shapely.ops import transform, unary_union
 from shapely.prepared import prep
 from shapely.strtree import STRtree
+from grid_model import GridModel, in_boundary, hotspot_point, MODEL_ID
 
 ROOT = Path(__file__).resolve().parents[1]
 BANGKOK = timezone(timedelta(hours=7), "Asia/Bangkok")
@@ -32,7 +31,7 @@ TO_WGS = Transformer.from_crs(32647, 4326, always_xy=True)
 FUEL_LAYER = {"GRASS":"GRASS", "LEPIRONIA":"LEPIRONIA",
     "M_CAJU_SURFACE_LOWLAND":"M_CAJU", "M_CAJU_LEAVES_BARK_LOWLAND":"M_CAJU",
     "PADDY":"PADDY", "PEAT":"PEAT"}
-GEOMETRY_METHOD = "axis-aligned UTM rectangle using FIRMS scan/track (km); approximate pixel footprint"
+GEOMETRY_METHOD = "Fixed EPSG:32647 1000 m grid, origin (0,0); point activation, full AOI-clipped cell, 4-edge groups"
 SENSOR_LABELS = {"ALL":"ทุกดาวเทียม", "MODIS_NRT":"MODIS Terra/Aqua", "VIIRS_SNPP_NRT":"VIIRS S-NPP",
                  "VIIRS_NOAA20_NRT":"VIIRS NOAA-20", "VIIRS_NOAA21_NRT":"VIIRS NOAA-21"}
 
@@ -80,9 +79,12 @@ def normalize(row, source):
         raise ValueError("Invalid acquisition time")
     clock = clock.zfill(4)
     timestamp = datetime.strptime(str(row["acq_date"]).strip()+clock, "%Y-%m-%d%H%M").replace(tzinfo=UTC)
-    scan, track = float(row["scan"]), float(row["track"])
-    if not all(math.isfinite(v) and 0 < v <= 50 for v in (scan,track)):
-        raise ValueError("Invalid scan/track")
+    def optional_size(value):
+        try:
+            value=float(value)
+            return value if math.isfinite(value) and value>0 else None
+        except (TypeError,ValueError):return None
+    scan,track=optional_size(row.get("scan")),optional_size(row.get("track"))
     satellite = str(row.get("satellite") or source).strip()
     uid = hashlib.sha256(f"{source}|{satellite}|{timestamp.isoformat()}|{lat:.6f}|{lon:.6f}".encode()).hexdigest()[:24]
     frp = row.get("frp")
@@ -98,7 +100,7 @@ def normalize(row, source):
 
 def parse_csv(text, source):
     reader = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
-    required = {"latitude","longitude","acq_date","acq_time","scan","track"}
+    required = {"latitude","longitude","acq_date","acq_time"}
     if not reader.fieldnames or not required.issubset(reader.fieldnames):
         raise ValueError("FIRMS response has no expected CSV header")
     result, rejected = {}, 0
@@ -152,70 +154,31 @@ def fetch_availability(key, opener=urlopen):
     except (HTTPError,URLError,TimeoutError,OSError,ValueError,UnicodeError,KeyError):
         raise RuntimeError("FIRMS availability check failed") from None
 
-def footprint(obs):
-    x,y = TO_METRIC.transform(obs["longitude"],obs["latitude"])
-    return box(x-obs["scan_km"]*500, y-obs["track_km"]*500,
-               x+obs["scan_km"]*500, y+obs["track_km"]*500)
+_MODEL_CACHE={}
+def grid_model(boundary,layers,parameters,indices=None):
+    key=(id(boundary),id(layers),id(parameters))
+    if _MODEL_CACHE.get("key")!=key:
+        _MODEL_CACHE.clear()
+        _MODEL_CACHE.update(key=key,model=GridModel(boundary,layers,parameters,indices))
+    return _MODEL_CACHE["model"]
 
-def overlay_area(geometry, layer, index=None):
-    if geometry.is_empty: return 0.0
-    if index is None: return geometry.intersection(layer).area/10000
-    parts, tree = index
-    return sum(geometry.intersection(parts[int(i)]).area for i in tree.query(geometry,predicate="intersects"))/10000
+def summarize(observations,boundary,layers,parameters,indices=None):
+    return grid_model(boundary,layers,parameters,indices).summarize(observations)
 
-def summarize(observations, boundary, layers, parameters, indices=None):
-    """Union detections once per selected day/source; intentionally retain fuel-layer overlaps."""
-    masks = [footprint(o).intersection(boundary) for o in observations]
-    masks = [g for g in masks if not g.is_empty and g.area>0]
-    burned = unary_union(masks) if masks else GeometryCollection()
-    ground_ha = burned.area/10000
-    layer_areas = {code:overlay_area(burned,g,indices.get(code) if indices else None) for code,g in layers.items()}
-    fuel_rows = []
-    for p in parameters["fuels"]:
-        area = layer_areas[FUEL_LAYER[p["code"]]]
-        emission = area*p["rho"]*p["eta"]*p["ef_pm25"]
-        fuel_rows.append({"code":p["code"],"area_ha":area,"rho":p["rho"],"eta":p["eta"],
-            "ef_pm25":p["ef_pm25"],"emission_kg":emission,"peat_scenario":p["code"]=="PEAT"})
-    # Clip candidate parts first: unioning entire complex land-use layers for each
-    # daily/sensor summary is needlessly expensive and geometrically equivalent.
-    surface_patches=[]
-    for code,layer in layers.items():
-        if code=="PEAT" or layer_areas[code]<=0: continue
-        if indices and code in indices:
-            parts,tree=indices[code]
-            surface_patches.extend(burned.intersection(parts[int(i)])
-                for i in tree.query(burned,predicate="intersects"))
-        else:
-            surface_patches.append(burned.intersection(layer))
-    covered=unary_union(surface_patches).area/10000 if surface_patches else 0
-    return {"observation_count":len(masks), "ground_area_ha":ground_ha,
-        "surface_unclassified_ha":max(0,ground_ha-covered),
-        "emission_without_peat_kg":sum(r["emission_kg"] for r in fuel_rows if not r["peat_scenario"]),
-        "peat_emission_kg":sum(r["emission_kg"] for r in fuel_rows if r["peat_scenario"]),
-        "emission_kg":sum(r["emission_kg"] for r in fuel_rows), "fuels":fuel_rows,
-        "burned_geometry":mapping(transform(TO_WGS.transform,burned)) if ground_ha else None}
+def point_features(observations,boundary,layers=None,parameters=None,indices=None):
+    if layers is None or parameters is None:raise ValueError("Grid model inputs are required")
+    return grid_model(boundary,layers,parameters,indices).hotspots(observations)
 
-def point_features(observations, boundary, layers=None, parameters=None, indices=None):
-    features=[]
-    for obs in observations:
-        geom=footprint(obs).intersection(boundary)
-        if geom.is_empty or geom.area<=0: continue
-        properties=dict(obs)
-        if layers is not None and parameters is not None:
-            summary=summarize([obs],boundary,layers,parameters,indices)
-            properties["pixel_emission"]={k:summary[k] for k in
-                ("ground_area_ha","emission_without_peat_kg","peat_emission_kg","emission_kg","fuels")}
-        features.append({"type":"Feature","properties":properties,"geometry":mapping(transform(TO_WGS.transform,geom))})
-    return {"type":"FeatureCollection","features":features}
 
 def index_row(day, selections, data_state, source_status=None):
     def compact(summary):
         return {k:summary[k] for k in ("observation_count","ground_area_ha","emission_kg",
-            "emission_without_peat_kg","peat_emission_kg","fuels")}
+            "emission_without_peat_kg","peat_emission_kg","fuels","grid_count","cluster_count")}
     total=selections["ALL"]
     return {"date":day,"observations":total["observation_count"],"area_ha":total["ground_area_ha"],
         "emission_kg":total["emission_kg"],"emission_without_peat_kg":total["emission_without_peat_kg"],
         "peat_emission_kg":total["peat_emission_kg"],"data_state":data_state,
+        "grid_count":total["grid_count"],"cluster_count":total["cluster_count"],
         "by_source":{source:compact(summary) for source,summary in selections.items()},
         "source_status":{source:info["state"] for source,info in (source_status or {}).items()}}
 
@@ -223,19 +186,20 @@ def index_row(day, selections, data_state, source_status=None):
 def bootstrap(root=ROOT):
     target=root/"web"/"data"
     if not (target/"index.json").exists():
-        write_json(target/"index.json",{"schema_version":1,"timezone":"Asia/Bangkok","dates":[],"daily":[]})
+        write_json(target/"index.json",{"schema_version":2,"model_id":MODEL_ID,"timezone":"Asia/Bangkok","dates":[],"daily":[]})
     if not (target/"status.json").exists():
         write_json(target/"status.json",{"state":"awaiting_key","last_attempt_utc":None,"last_success_utc":None,
             "message":"ยังไม่ได้เชื่อม FIRMS MAP_KEY", "sources":{s:{"state":"not_configured"} for s in SOURCES}})
     write_json(target/"parameters.json",load_json(root/"config"/"emission_parameters.json"))
     spatial=load_json(root/"config"/"spatial_dataset.json")
     audit=load_json(root/"outputs"/"tables"/"spatial_dataset_audit.json")
-    write_json(target/"project.json",{"name":"Kuan Kreng Fire & Emission","timezone":"Asia/Bangkok",
+    write_json(target/"project.json",{"name":"Kuan Kreng 1 km Grid Fire & Emission","timezone":"Asia/Bangkok",
         "study_area_ha":audit["study_area_ha"],"bbox":spatial["bbox_wgs84"],
         "sources":SENSOR_LABELS,"geometry_method":GEOMETRY_METHOD,
         "daily_policy":"independent_daily_fuel_scenario","peat_depth_cm":10,
         "layer_overlap_policy":"intersect_each_layer_independently",
-        "surface_unclassified_ha":audit["surface_unclassified_ha"]})
+        "surface_unclassified_ha":audit["surface_unclassified_ha"],
+        "model_id":MODEL_ID,"grid_size_m":1000,"grid_origin_utm":[0,0],"connectivity":4,"full_grid_scenario":True})
 
 def collect(root=ROOT, key=None, days=3, now=None):
     bootstrap(root)
@@ -250,7 +214,7 @@ def collect(root=ROOT, key=None, days=3, now=None):
         return 2
     project=load_json(root/"config"/"spatial_dataset.json")
     bbox=project["bbox_wgs84"]
-    # Query centers around AOI as footprints centered just outside can intersect the boundary.
+    # Fetch a padded bbox, then retain only point centers inside the study boundary.
     query_bbox=[max(-180,bbox[0]-.1),max(-90,bbox[1]-.1),min(180,bbox[2]+.1),min(90,bbox[3]+.1)]
     history=target/"history"
     all_observations={}
@@ -303,7 +267,7 @@ def collect(root=ROOT, key=None, days=3, now=None):
     boundary_check=prep(boundary)
     grouped={}
     for o in all_observations.values():
-        if boundary_check.intersects(footprint(o)):
+        if in_boundary(o,boundary):
             grouped.setdefault(o["local_date"],[]).append(o)
     index=load_json(target/"index.json")
     dates=set(index.get("dates",[]))|set(grouped)
@@ -330,13 +294,13 @@ def collect(root=ROOT, key=None, days=3, now=None):
             "geometry_method":GEOMETRY_METHOD,"daily_policy":"independent_daily_fuel_scenario",
             "window_start_utc":start.isoformat(),"calendar_day_fully_queried":complete_window,
             "source_status":statuses,"data_state":"ok" if all_sources_current else "partial",
-            "by_source":selections,"footprints":point_features(records,boundary,layers,parameters,indices)}
+            "model_id":MODEL_ID,"full_grid_scenario":True,"by_source":selections,"hotspots":point_features(records,boundary,layers,parameters,indices)}
         write_json(target/"daily"/(day+".json"),payload)
         write_json(history/(day+".json"),{"date":day,"observations":records})
         total=selections["ALL"]
         previous_daily[day]=index_row(day,selections,payload["data_state"],statuses)
     rows=[previous_daily[d] for d in sorted(previous_daily)]
-    write_json(target/"index.json",{"schema_version":1,"timezone":"Asia/Bangkok",
+    write_json(target/"index.json",{"schema_version":2,"model_id":MODEL_ID,"timezone":"Asia/Bangkok",
         "generated_utc":stamp,"dates":sorted(previous_daily),"daily":rows})
     state="ok" if all_sources_current else "partial"
     write_json(target/"status.json",{"state":state,"last_attempt_utc":stamp,
