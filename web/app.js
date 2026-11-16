@@ -95,8 +95,9 @@ function drawFires(){
  if($("show-hotspots").checked){
   const cells=new Map(summary.cells.features.map(f=>[f.properties.grid_id,f.properties]));
   const points={type:"FeatureCollection",features:state.day.hotspots.features.filter(f=>state.source==="ALL"||f.properties.source===state.source)};
+  const hotspotRenderer=L.svg({pane:"hotspots"});
   state.hotspotLayer=L.geoJSON(points,{pane:"hotspots",
-   pointToLayer:(feature,latlng)=>L.circleMarker(latlng,{pane:"hotspots",radius:3.5,color:"#a33522",weight:1,fillColor:"#f35132",fillOpacity:1}),
+   pointToLayer:(feature,latlng)=>L.circleMarker(latlng,{pane:"hotspots",renderer:hotspotRenderer,radius:3.5,color:"#a33522",weight:1,fillColor:"#f35132",fillOpacity:1}),
    onEachFeature:(feature,layer)=>{const p=cells.get(feature.properties.grid_id);if(p)layer.bindPopup(()=>gridPopup(p,"cell",feature.properties),{maxWidth:470,minWidth:300,maxHeight:450});}
   }).addTo(state.map);
  }
