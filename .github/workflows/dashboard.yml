@@ -34,6 +34,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m unittest discover -s tests -v
       - run: node tests/chart-data.test.cjs
+      - run: node tests/dashboard-trend.test.cjs
       - run: python scripts/fire_pipeline.py bootstrap
       - name: Collect live FIRMS data
         id: collect

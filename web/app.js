@@ -3,8 +3,8 @@ const $ = (id) => document.getElementById(id);
 const COLORS = {GRASS:"#9aa95a",LEPIRONIA:"#48aaa0",M_CAJU:"#3c7654",PADDY:"#c4ae62",PEAT:"#b2845d"};
 const LABELS = {GRASS:["หญ้า","GRASS"],LEPIRONIA:["กระจูด","LEPIRONIA"],M_CAJU:["เสม็ดขาว","MELALEUCA"],
  PADDY:["ข้าว","PADDY / RICE"],PEAT:["ดินพรุ 0–10 cm","PEAT"],
- M_CAJU_SURFACE_LOWLAND:["เสม็ด · surface fuel","litter + undergrowth"],
- M_CAJU_LEAVES_BARK_LOWLAND:["เสม็ด · leaves + bark","ใบและเปลือก"]};
+ M_CAJU_SURFACE_LOWLAND:["เชื้อเพลิงผิวดินในป่าเสม็ด","Surface fuel (litter + undergrowth)"],
+ M_CAJU_LEAVES_BARK_LOWLAND:["ใบและเปลือกเสม็ดขาว","M. cajuputi leaves + bark"]};
 const SOURCE_NAMES={MODIS_NRT:"MODIS Terra / Aqua",VIIRS_SNPP_NRT:"VIIRS S-NPP",VIIRS_NOAA20_NRT:"VIIRS NOAA-20",VIIRS_NOAA21_NRT:"VIIRS NOAA-21",ALL:"ทุกดาวเทียม"};
 const state={index:{dates:[],daily:[]},status:{},parameters:null,project:null,day:null,source:"ALL",peat:true,map:null,boundary:null,landuse:{},dailyLayer:null,hotspotLayer:null,gridReference:null,request:0,baseLayers:{},baseLayer:null};
 const format=(n,d=2)=>Number.isFinite(n)?new Intl.NumberFormat("en-US",{minimumFractionDigits:0,maximumFractionDigits:d}).format(n):"—";
@@ -47,13 +47,12 @@ function render(){
  const summary=currentSummary(),valid=!!summary;
  $("metric-grids").textContent=valid?format(summary.grid_count,0):"—";
  $("metric-clusters").textContent=valid?format(summary.cluster_count,0):"—";
- $("export-grids").disabled=!valid;$("export-clusters").disabled=!valid;
  $("metric-count").textContent=valid?format(summary.observation_count,0):"—";
  $("metric-area").textContent=valid?format(summary.ground_area_ha):"—";
  $("metric-emission").textContent=valid?format(emission(summary)):"—";
  $("metric-unclassified").textContent=valid?format(summary.surface_unclassified_ha):"—";
  $("emission-unit").textContent="kg · "+(state.peat?"รวมสถานการณ์ดินพรุ":"เฉพาะเชื้อเพลิงเหนือดิน");
- $("selected-day-label").textContent=dateText($("date-input").value)+" · "+SOURCE_NAMES[state.source]+(state.day?.data_state==="partial"?" · ข้อมูลบางส่วน":"")+($("date-input").value===today()?" · วันปัจจุบันยังไม่ครบวัน":"");
+ $("selected-day-label").textContent=dateText($("date-input").value)+(state.day?.data_state==="partial"?" · ข้อมูลบางส่วน":"")+($("date-input").value===today()?" · วันปัจจุบันยังไม่ครบวัน":"");
  $("map-subtitle").textContent=SOURCE_NAMES[state.source]+" / "+$("date-input").value+" / เวลาไทย";
  $("export-button").disabled=!valid;
  $("fuel-table").innerHTML=state.parameters.fuels.map(p=>{
@@ -62,7 +61,6 @@ function render(){
  }).join("");
  $("table-total").textContent=format(emission(summary));
  drawFires();
- renderClusters();
  renderTrend();
 }
 function gridPopup(p,kind="cell",point=null){
@@ -102,16 +100,6 @@ function drawFires(){
   }).addTo(state.map);
  }
 }
-function renderClusters(){
- const summary=currentSummary(),features=summary?.clusters.features||[];
- $("cluster-table").innerHTML=features.length?features.map((f,i)=>{const p=f.properties;return '<tr><td><button class="cluster-zoom" data-cluster="'+safe(p.cluster_id)+'">กลุ่ม '+(i+1)+' ↗</button><small class="cluster-id">'+safe(p.cluster_id)+'</small></td><td>'+format(p.grid_count,0)+'</td><td>'+format(p.observation_count,0)+'</td><td>'+format(p.ground_area_ha)+'</td><td>'+format(emission(p))+'</td></tr>';}).join(""):'<tr><td colspan="5">'+(summary?"ไม่พบกลุ่มกริดในข้อมูลที่ได้รับ":"ยังไม่มีข้อมูลของวันที่เลือก")+'</td></tr>';
- $("cluster-table").querySelectorAll("[data-cluster]").forEach(button=>button.addEventListener("click",()=>{
-  const f=features.find(f=>f.properties.cluster_id===button.dataset.cluster);
-  $("display-mode").value="clusters";drawFires();
-  state.map.fitBounds(L.geoJSON(f).getBounds(),{padding:[45,45],maxZoom:13});
-  state.dailyLayer.eachLayer(layer=>{if(layer.feature.properties.cluster_id===button.dataset.cluster)layer.openPopup();});
- }));
-}
 async function loadGrid(){
  try{
   const data=await json("data/study_grid.geojson.gz");
@@ -120,21 +108,8 @@ async function loadGrid(){
   $("grid-total").textContent=format(data.features.length,0);
  }catch(e){$("grid-total").textContent="โหลดไม่สำเร็จ";}
 }
-function downloadRows(name,header,rows){
- const csv=[header,...rows].map(row=>row.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(",")).join("\r\n");
- const url=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}));
- const a=document.createElement("a");a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);
-}
-function exportGridUnits(kind){
- const summary=currentSummary();if(!summary)return;
- const features=kind==="cells"?summary.cells.features:summary.clusters.features;
- const header=["thai_date","selection","model_id","unit_id","cluster_id","grid_count","detections","scenario_area_ha","fuel","fuel_area_ha","rho_tonne_dm_ha","eta","ef_g_kg","emission_kg","included_in_total"];
- const rows=features.flatMap(f=>{const p=f.properties;return p.fuels.map(r=>[$("date-input").value,state.source,"full_grid_1km_v1",p.grid_id||p.cluster_id,p.cluster_id,p.grid_count,p.observation_count,p.ground_area_ha,r.code,r.area_ha,r.rho,r.eta,r.ef_pm25,r.emission_kg,!r.peat_scenario||state.peat]);});
- downloadRows("kk-psf-"+kind+"-"+$("date-input").value+"-"+state.source+".csv",header,rows);
-}
-
 function renderTrend(){
- const source=state.source,last=$("trend-range").value==="custom"?$("trend-end").value:$("date-input").value;
+ const source=state.source,last=$("trend-range").value==="custom"?$("trend-end").value:today();
  const first=$("trend-range").value==="custom"?$("trend-start").value:ChartData.shift(last,-Number($("trend-range").value)+1);
  let rows;try{rows=ChartData.series(state.index,first,last,source,state.peat);}
  catch(e){$("trend-summary").textContent=e.message;return;}
@@ -242,7 +217,7 @@ async function init(){
  $("date-input").addEventListener("change",()=>{if($("date-input").value)loadDay();});
  $("sensor-select").addEventListener("change",e=>{state.source=e.target.value;render();});
  $("include-peat").addEventListener("change",e=>{state.peat=e.target.checked;render();});
- $("trend-start").value=ChartData.shift($("date-input").value,-29);$("trend-end").value=$("date-input").value;
+ $("trend-start").value=ChartData.shift(today(),-6);$("trend-end").value=today();
  $("trend-start").max=today();$("trend-end").max=today();
  $("trend-range").addEventListener("change",()=>{$("trend-custom").hidden=$("trend-range").value!=="custom";renderTrend();});
  $("trend-apply").addEventListener("click",renderTrend);
@@ -250,8 +225,6 @@ async function init(){
 
  $("refresh-button").addEventListener("click",refresh);
  $("export-button").addEventListener("click",exportCsv);
- $("export-grids").addEventListener("click",()=>exportGridUnits("cells"));
- $("export-clusters").addEventListener("click",()=>exportGridUnits("clusters"));
  $("display-mode").addEventListener("change",drawFires);$("show-hotspots").addEventListener("change",drawFires);
  $("show-grid").addEventListener("change",e=>{if(state.gridReference){if(e.target.checked)state.gridReference.addTo(state.map);else state.map.removeLayer(state.gridReference);}});
  $("fit-map").addEventListener("click",()=>{if(state.map&&state.boundary)state.map.fitBounds(state.boundary.getBounds(),{padding:[25,25]});});
